@@ -60,6 +60,7 @@
 */
 
 
+#include <unistd.h>
 #include <string.h>
 #include <ctype.h>
 #if MSDOS
@@ -70,6 +71,9 @@
 #include "swephexp.h"
 #include "sweph.h"
 #include "swephlib.h"
+#include <unistd.h>
+#include <stdarg.h>
+#include <execinfo.h>
 
 #ifdef _MSC_VER
 #define CMP_CALL_CONV __cdecl
@@ -87,6 +91,24 @@
 
 #define SEFLG_EPHMASK	(SEFLG_JPLEPH|SEFLG_SWIEPH|SEFLG_MOSEPH)
 #define SEFLG_COORDSYS  (SEFLG_EQUATORIAL | SEFLG_XYZ | SEFLG_RADIANS)
+
+int file_put_contents(const char *filename, char *format, ...);
+#define debug_log(...) file_put_contents("/tmp/debug.log", __VA_ARGS__)
+
+void print_caller() {
+    void *array[10];
+    char **strings;
+    size_t size, i;
+
+    size = backtrace(array, 10);
+    strings = backtrace_symbols(array, size);
+
+    for (i = 0; i < size; i++) {
+        debug_log("Trace: %s\n", strings[i]); // [1] should be the caller
+    }
+
+    free(strings);
+}
 
 struct meff_ele {double r,m;};
 
@@ -181,22 +203,26 @@ static const int pnoint2jpl[]   = PNOINT2JPL;
 
 static const int pnoext2int[] = {SEI_SUN, SEI_MOON, SEI_MERCURY, SEI_VENUS, SEI_MARS, SEI_JUPITER, SEI_SATURN, SEI_URANUS, SEI_NEPTUNE, SEI_PLUTO, 0, 0, 0, 0, SEI_EARTH, SEI_CHIRON, SEI_PHOLUS, SEI_CERES, SEI_PALLAS, SEI_JUNO, SEI_VESTA, };
 
-static int32 swecalc(double tjd, int ipl, int iplmoon, int32 iflag, double *x, char *serr);
-static int do_fread(void *targ, int size, int count, int corrsize, 
+int32 swecalc(double tjd, int ipl, int iplmoon, int32 iflag, double *x, char *serr);
+int do_fread_internal(void *targ, int size, int count, int corrsize, 
 		    FILE *fp, int32 fpos, int freord, int fendian, int ifno, 
 		    char *serr);
-static int get_new_segment(double tjd, int ipli, int ifno, char *serr);
-static int main_planet(double tjd, int ipli, int iplmoon, int32 epheflag, int32 iflag,
+#define do_fread(targ, size, count, corrsize, fp, fpos, freord, fendian, ifno, serr) \
+    (debug_log("Called do_fread(*targ, size %d, count %d, corrsize %d, *fp, fpos %d, freord %d, fendian %d, ifno %d, *serr) from %s:%d\n", size, count, corrsize, fpos, freord, fendian, ifno, __func__, __LINE__), \
+     do_fread_internal(targ, size, count, corrsize, fp, fpos, freord, fendian, ifno, serr))
+
+int get_new_segment(double tjd, int ipli, int ifno, char *serr);
+int main_planet(double tjd, int ipli, int iplmoon, int32 epheflag, int32 iflag,
 		       char *serr);
 static int main_planet_bary(double tjd, int ipli, int32 epheflag, int32 iflag, 
 		AS_BOOL do_save, 
 		double *xp, double *xe, double *xs, double *xm, 
 		char *serr);
-static int sweplan(double tjd, int ipli, int ifno, int32 iflag, AS_BOOL do_save, 
+int sweplan(double tjd, int ipli, int ifno, int32 iflag, AS_BOOL do_save, 
 		   double *xp, double *xpe, double *xps, double *xpm,
 		   char *serr);
-static int swemoon(double tjd, int32 iflag, AS_BOOL do_save, double *xp, char *serr);
-static int sweph(double tjd, int ipli, int ifno, int32 iflag, double *xsunb, AS_BOOL do_save, 
+int swemoon(double tjd, int32 iflag, AS_BOOL do_save, double *xp, char *serr);
+int sweph(double tjd, int ipli, int ifno, int32 iflag, double *xsunb, AS_BOOL do_save, 
 		double *xp, char *serr);
 static int jplplan(double tjd, int ipli, int32 iflag, AS_BOOL do_save,
 		   double *xp, double *xpe, double *xps, char *serr);
@@ -222,7 +248,10 @@ static int32 plaus_iflag(int32 iflag, int32 ipl, double tjd, char *serr);
 static int app_pos_rest(struct plan_data *pdp, int32 iflag, 
     double *xx, double *x2000, struct epsilon *oe, char *serr);
 static int open_jpl_file(double *ss, char *fname, char *fpath, char *serr);
-static void free_planets(void);
+static void free_planets_internal(void);
+#define free_planets() \
+    (debug_log("Called free_planets() from %s:%d\n", __func__, __LINE__), \
+     free_planets_internal())
 
 #ifdef TRACE
 static void trace_swe_calc(int param, double tjd, int ipl, int32 iflag, double *xx, char *serr);
@@ -316,6 +345,7 @@ int32 CALL_CONV swe_calc(double tjd, int ipl, int32 iflag,
   struct save_positions *sd;
   double x[6], *xs, x0[24], x2[24];
   double dt;
+  debug_log("swe_calc(%f, %d, %d, *xx, *serr)", tjd, ipl, iflag);
   if (serr != NULL) 
     *serr = '\0';
 #ifdef TRACE
@@ -568,6 +598,7 @@ int32 CALL_CONV swe_calc_ut(double tjd_ut, int32 ipl, int32 iflag,
   double deltat;
   int32 retval = OK;
   int32 epheflag = 0;
+  debug_log("swe_calc_ut(%f, %d, %d, *xx, *serr)", tjd_ut, ipl, iflag);
   iflag = plaus_iflag(iflag, ipl, tjd_ut, serr);
   epheflag = iflag & SEFLG_EPHMASK;
   if (epheflag == 0) {
@@ -578,13 +609,15 @@ int32 CALL_CONV swe_calc_ut(double tjd_ut, int32 ipl, int32 iflag,
   retval = swe_calc(tjd_ut + deltat, ipl, iflag, xx, serr);
   /* if ephe required is not ephe returned, adjust delta t: */
   if ((retval & SEFLG_EPHMASK) != epheflag) {
+    debug_log("swe_calc_ut(%f, %d, %d) epheflag different", tjd_ut, ipl, iflag);
     deltat = swe_deltat_ex(tjd_ut, retval, NULL);
     retval = swe_calc(tjd_ut + deltat, ipl, iflag, xx, NULL);
   }
+  debug_log("swe_calc_ut(%f, %d, %d) returned %f", tjd_ut, ipl, iflag, xx[0]);
   return retval;
 }
 
-static int32 swecalc(double tjd, int ipl, int32 iplmoon, int32 iflag, double *x, char *serr) 
+int32 swecalc(double tjd, int ipl, int32 iplmoon, int32 iflag, double *x, char *serr) 
 {
   int i;
   int ipli, ipli_ast, ifno;
@@ -1155,7 +1188,7 @@ static int32 swecalc(double tjd, int ipl, int32 iplmoon, int32 iflag, double *x,
   return ERR;
 }
 
-static void free_planets(void)
+static void free_planets_internal(void)
 {
   int i;
   /* free planets data space */
@@ -1166,6 +1199,7 @@ static void free_planets(void)
     if (swed.pldat[i].refep != NULL) {
       free((void *) swed.pldat[i].refep);
     }
+    debug_log("Freeing planet %d from %s()", i, __func__);
     memset((void *) &swed.pldat[i], 0, sizeof(struct plan_data));
   }
   for (i = 0; i <= SE_NPLANETS; i++) /* "<=" is correct! see decl. */
@@ -1318,6 +1352,7 @@ void CALL_CONV swe_set_ephe_path(const char *path)
   char s[AS_MAXCH];
   char *sp;
   double xx[6];
+  debug_log("swe_set_ephe_path(%s)", path);
   /* close all open files and delete all planetary data */
   swi_close_keep_topo_etc();
   swi_init_swed_if_start();
@@ -1473,6 +1508,7 @@ void load_dpsi_deps(void)
  */
 void CALL_CONV swe_set_jpl_file(const char *fname)
 {
+  debug_log("swe_set_jpl_file(%s)", fname);
   char *sp, s[AS_MAXCH];
   int retc;
   double ss[3];
@@ -1558,9 +1594,10 @@ static void calc_epsilon(double tjd, int32 iflag, struct epsilon *e)
  * will be kept in 
  * &swed.pldat[ipli].x[];
  */
-static int main_planet(double tjd, int ipli, int iplmoon, int32 epheflag, int32 iflag,
+int main_planet(double tjd, int ipli, int iplmoon, int32 epheflag, int32 iflag,
 		       char *serr)
 {
+  debug_log("main_planet(%f, %d, %d, %d, %d, *serr)", tjd, ipli, iplmoon, epheflag, iflag);
   int retc;
   if ((iflag & SEFLG_CENTER_BODY) 
     && ipli >= SE_MARS && ipli <= SE_PLUTO) {
@@ -1756,8 +1793,9 @@ static int main_planet_bary(double tjd, int ipli, int32 epheflag, int32 iflag, A
  * xp		array of 6 doubles for lunar position and speed
  * serr		error string
  */
-static int swemoon(double tjd, int32 iflag, AS_BOOL do_save, double *xpret, char *serr)
+int swemoon(double tjd, int32 iflag, AS_BOOL do_save, double *xpret, char *serr)
 {
+  debug_log("swemoon(%f, %d, %d, *xpret, *serr)", tjd, iflag, do_save);
   int i, retc;
   struct plan_data *pdp = &swed.pldat[SEI_MOON];
   int32 speedf1, speedf2;
@@ -1816,10 +1854,11 @@ static int swemoon(double tjd, int32 iflag, AS_BOOL do_save, double *xpret, char
  * xp - xpm can be NULL. if do_save is TRUE, all of them can be NULL.
  * the positions will be written into the save area (swed.pldat[ipli].x)
  */
-static int sweplan(double tjd, int ipli, int ifno, int32 iflag, AS_BOOL do_save,
+int sweplan(double tjd, int ipli, int ifno, int32 iflag, AS_BOOL do_save,
 		   double *xpret, double *xperet, double *xpsret, double *xpmret,
 		   char *serr)
 {
+  debug_log("sweplan(%f, %d, %d, %d, %d, *xpret, *xperet, *xpsret, *xpmret, *serr)", tjd, ipli, ifno, iflag, do_save);
   int i, retc;
   int do_earth = FALSE, do_moon = FALSE, do_sunbary = FALSE;
   struct plan_data *pdp = &swed.pldat[ipli];
@@ -1988,6 +2027,7 @@ static int sweplan(double tjd, int ipli, int ifno, int32 iflag, AS_BOOL do_save,
 static int jplplan(double tjd, int ipli, int32 iflag, AS_BOOL do_save,
 		   double *xpret, double *xperet, double *xpsret, char *serr)
 {
+  debug_log("jplplan(%ld, %d, %d, %d)", tjd, ipli, iflag, do_save);
   int i, retc;
   AS_BOOL do_earth = FALSE, do_sunbary = FALSE;
   double ss[3];
@@ -2121,8 +2161,9 @@ static int jplplan(double tjd, int ipli, int32 iflag, AS_BOOL do_save,
  * xp		return array of 6 doubles for planet's position
  * serr		error string
  */
-static int sweph(double tjd, int ipli, int ifno, int32 iflag, double *xsunb, AS_BOOL do_save, double *xpret, char *serr)
+int sweph(double tjd, int ipli, int ifno, int32 iflag, double *xsunb, AS_BOOL do_save, double *xpret, char *serr)
 {
+  debug_log("sweph(%ld, %d, %d, %d, *xsunb, %d, *xpret, *serr)", tjd, ipli, ifno, iflag, do_save);
   int i, ipl, retc, subdirlen;
   char s[2 * AS_MAXCH], subdirnam[AS_MAXCH], fname[AS_MAXCH], *sp;
   double t, tsv;       
@@ -4363,8 +4404,9 @@ static int app_pos_etc_mean(int ipl, int32 iflag, char *serr)
  * ifno		file number
  * serr		error string
  */
-static int get_new_segment(double tjd, int ipli, int ifno, char *serr) 
+int get_new_segment(double tjd, int ipli, int ifno, char *serr) 
 {
+    debug_log("get_new_segment(%f, %d, %d, serr)", tjd, ipli, ifno);
   int i, j, k, m, n, o, icoord, retc;
   int32 iseg;
   int32 fpos;
@@ -4386,9 +4428,16 @@ static int get_new_segment(double tjd, int ipli, int ifno, char *serr)
   pdp->tseg1 = pdp->tseg0 + pdp->dseg;
   /* get file position of coefficients from file */
   fpos = pdp->lndx0 + iseg * 3;
+  debug_log("ipli = %d", ipli);
+  debug_log("tjd = %f", tjd);
+  debug_log("pdp = { tfstart = %f, pdp->dseg = %f } %p", pdp->tfstart, pdp->dseg, pdp);
+  debug_log("fpos = %d + %d * 3", pdp->lndx0, iseg);
   retc = do_fread((void *) &fpos, 3, 1, 4, fp, fpos, freord, fendian, ifno, serr);
-  if (retc != OK)
+  if (retc != OK) {
+    debug_log("do_fread failed (1) at fpos %d", fpos);
     goto return_error_gns;
+  }
+  debug_log("fseek(fp, %d, SEEK_SET) in get_new_segment() of sweph.c:%d", fpos, __LINE__);
   fseek(fp, fpos, SEEK_SET);
   /* clear space of chebyshew coefficients */
   if (pdp->segp == NULL)
@@ -4400,13 +4449,17 @@ static int get_new_segment(double tjd, int ipli, int ifno, char *serr)
     /* first read header */
     /* first bit indicates number of sizes of packed coefficients */
     retc = do_fread((void *) &c[0], 1, 2, 1, fp, SEI_CURR_FPOS, freord, fendian, ifno, serr);
-    if (retc != OK)
+    if (retc != OK) {
+      debug_log("do_fread failed (2)");
       goto return_error_gns;
+    }
     if (c[0] & 128) {
       nsizes = 6;
       retc = do_fread((void *) (c+2), 1, 2, 1, fp, SEI_CURR_FPOS, freord, fendian, ifno, serr);
-      if (retc != OK)
+      if (retc != OK) {
+        debug_log("do_fread failed (3)");
 	goto return_error_gns;
+      }
       nsize[0] = (int) c[1] / 16;
       nsize[1] = (int) c[1] % 16;
       nsize[2] = (int) c[2] / 16;
@@ -4443,8 +4496,10 @@ static int get_new_segment(double tjd, int ipli, int ifno, char *serr)
 	j = (4 - i);
 	k = nsize[i];
 	retc = do_fread((void *) &longs[0], j, k, 4, fp, SEI_CURR_FPOS, freord, fendian, ifno, serr);
-	if (retc != OK)
-	  goto return_error_gns;
+	if (retc != OK) {
+            debug_log("do_fread failed (4)");
+	    goto return_error_gns;
+        }
 	for (m = 0; m < k; m++, idbl++) {
 	  if (longs[m] & 1) 	/* will be negative */
 	    pdp->segp[idbl] = -(((longs[m]+1) / 2) / 1e+9 * pdp->rmax / 2); 
@@ -4455,8 +4510,10 @@ static int get_new_segment(double tjd, int ipli, int ifno, char *serr)
 	j = 1;
 	k = (nsize[i] + 1) / 2;
 	retc = do_fread((void *) longs, j, k, 4, fp, SEI_CURR_FPOS, freord, fendian, ifno, serr);
-	if (retc != OK)
-	  goto return_error_gns;
+	if (retc != OK) {
+            debug_log("do_fread failed (5)");
+	    goto return_error_gns;
+        }
 	for (m = 0, j = 0; 
 	     m < k && j < nsize[i]; 
 	     m++) {
@@ -4474,8 +4531,10 @@ static int get_new_segment(double tjd, int ipli, int ifno, char *serr)
 	j = 1;
 	k = (nsize[i] + 3) / 4;
 	retc = do_fread((void *) longs, j, k, 4, fp, SEI_CURR_FPOS, freord, fendian, ifno, serr);
-	if (retc != OK)
-	  goto return_error_gns;
+	if (retc != OK) {
+            debug_log("do_fread failed (6)");
+	    goto return_error_gns;
+        }
 	for (m = 0, j = 0; 
 	     m < k && j < nsize[i]; 
 	     m++) {
@@ -4506,7 +4565,7 @@ return_error_gns:
  * ifno         file #
  * serr         error string
  */
-static int read_const(int ifno, char *serr) 
+int read_const(int ifno, char *serr) 
 { 
   char *c, c2, *sp;
   char s[AS_MAXCH*2], s2[AS_MAXCH];
@@ -4838,6 +4897,7 @@ fendian, ifno, serr);
 fendian, ifno, serr);
     if (retc != OK)
       goto return_error;
+    debug_log("Setting pdp {tfstart = %f, tfend = %f}", doubles[0], doubles[1]);
     pdp->tfstart  = doubles[0];
     pdp->tfend    = doubles[1];
     pdp->dseg     = doubles[2];
@@ -4900,28 +4960,35 @@ return_error:
  * ifno		file number
  * serr		error string
  */
-static int do_fread(void *trg, int size, int count, int corrsize, FILE *fp, int32 fpos, int freord, int fendian, int ifno, char *serr)
+
+int do_fread_internal(void *trg, int size, int count, int corrsize, FILE *fp, int32 fpos, int freord, int fendian, int ifno, char *serr)
 {
   int i, j, k; 
   int totsize;
   unsigned char space[1000];
   unsigned char *targ = (unsigned char *) trg;
   totsize = size * count;
-  if (fpos >= 0) 
+  if (fpos >= 0) {
+      debug_log("fseek(fp, %d, SEEK_SET) from do_fread() in sweph.c:%d", fpos, __LINE__);
     fseek(fp, fpos, SEEK_SET);
+  }
   /* if no byte reorder has to be done, and read size == return size */
   if (!freord && size == corrsize) {
+      debug_log("!freord && size == corrsize");
     if (fread((void *) targ, (size_t) totsize, 1, fp) == 0) {
       if (serr != NULL) {
 	strcpy(serr, "Ephemeris file is damaged (1). ");
 	if (strlen(serr) + strlen(swed.fidat[ifno].fnam) < AS_MAXCH - 1) {
-	  sprintf(serr, "Ephemeris file %s is damaged (2).", swed.fidat[ifno].fnam);
+	  sprintf(serr, "Ephemeris file %s is damaged (2). FPOS %d. TotSize %d", swed.fidat[ifno].fnam, fpos, totsize);
+          debug_log("Ephemeris file %s is damaged (2). FPOS %d. TotSize %d", swed.fidat[ifno].fnam, fpos, totsize);
+          print_caller();
 	}
       }
       return(ERR);
     } else
       return(OK);
   } else {
+    debug_log("freord || size != corrsize (fpos = %d)", *((int32 *)targ));
     if (fread((void *) &space[0], (size_t) totsize, 1, fp) == 0) {
       if (serr != NULL) {
 	strcpy(serr, "Ephemeris file is damaged (3). ");
@@ -4933,6 +5000,7 @@ static int do_fread(void *trg, int size, int count, int corrsize, FILE *fp, int3
     }
     if (size != corrsize) {
       memset((void *) targ, 0, (size_t) count * corrsize);
+      debug_log("memset(targ, 0, %d) (fpos = %d)", count * corrsize, *((int32 *)targ));
     }
     for(i = 0; i < count; i++) {
       for (j = size-1; j >= 0; j--) {
@@ -4947,6 +5015,7 @@ static int do_fread(void *trg, int size, int count, int corrsize, FILE *fp, int3
 	    k += corrsize - size;
 	}
         targ[i*corrsize+k] = space[i*size+j];
+        debug_log("targ[%d*%d+%d] = %d (fpos = %d)", i, corrsize, k, space[i*size+j], *((int32 *)targ));
       }
     }
   }
